@@ -4,7 +4,7 @@ import torch
 from torch import nn
 from torch.utils.data import DataLoader, TensorDataset
 import numpy as np
-
+from tqdm import tqdm
 
 from .models import get_device, get_embeddings
 
@@ -76,7 +76,7 @@ def train_mlp(
     val_split: float = 0.2,
     seed: int = 42,
     patience: int = 10,
-    verbose: bool = True,
+    verbose: bool = False,
     task: str = "regression",
     record_nc: bool = False,
 ) -> dict[str, list[float] | torch.Tensor]:
@@ -174,7 +174,7 @@ def train_mlp(
     best_state = None
     epochs_without_improvement = 0
 
-    for epoch in range(epochs):
+    for epoch in tqdm(range(epochs)):
         model.train()
         running_loss = 0.0
         running_correct = 0
