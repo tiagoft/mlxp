@@ -3,7 +3,7 @@ from typing import cast
 import torch
 from torch import nn
 from torch.utils.data import DataLoader, TensorDataset
-import numpy as np 
+import numpy as np
 
 
 from .models import get_device, get_embeddings
@@ -16,8 +16,8 @@ def nc1(h, y, rcond=1e-6):
     classes = np.unique(y)
     C, p = len(classes), h.shape[1]
 
-    mu_c = np.stack([h[y == c].mean(0) for c in classes])   # (C, p)
-    mu_G = mu_c.mean(0)                                     # class-balanced global mean
+    mu_c = np.stack([h[y == c].mean(0) for c in classes])  # (C, p)
+    mu_G = mu_c.mean(0)  # class-balanced global mean
 
     M = mu_c - mu_G
     Sigma_B = M.T @ M / C
@@ -37,7 +37,7 @@ def _class_means(h, y):
     y = np.asarray(y)
     classes = np.unique(y)
     mu_c = np.stack([h[y == c].mean(0) for c in classes])
-    mu_G = mu_c.mean(0)                      # class-balanced
+    mu_G = mu_c.mean(0)  # class-balanced
     return mu_c - mu_G, mu_G, classes
 
 
@@ -47,19 +47,18 @@ def nc2(h, y):
     C = len(classes)
 
     norms = np.linalg.norm(M, axis=1)
-    equinorm = norms.std() / norms.mean()            # coefficient of variation
+    equinorm = norms.std() / norms.mean()  # coefficient of variation
 
     Mn = M / norms[:, None]
     G = Mn @ Mn.T
-    off = G[~np.eye(C, dtype=bool)]                  # C(C-1) off-diagonal cosines
+    off = G[~np.eye(C, dtype=bool)]  # C(C-1) off-diagonal cosines
 
     return {
-        "equinorm": float(equinorm),                 # Figure 2
-        "cos_std": float(off.std()),                 # Figure 3: equiangularity
+        "equinorm": float(equinorm),  # Figure 2
+        "cos_std": float(off.std()),  # Figure 3: equiangularity
         "cos_gap": float(np.abs(off + 1 / (C - 1)).mean()),  # Figure 4: maximal angles
-        "cos_mean": float(off.mean()),               # should approach -1/(C-1)
+        "cos_mean": float(off.mean()),  # should approach -1/(C-1)
     }
-
 
 
 def train_mlp(
@@ -67,12 +66,13 @@ def train_mlp(
     x: torch.Tensor,
     y: torch.Tensor,
     p: torch.Tensor | None,
-    optimizer_type : str = "adam",
+    optimizer_type: str = "adam",
     epochs: int = 100,
     batch_size: int = 32,
     lr: float = 1e-3,
     loss_fn: nn.Module = nn.MSELoss(),
     device: torch.device | None = None,
+    weight_decay: float = 0.0,
     val_split: float = 0.2,
     seed: int = 42,
     patience: int = 10,
@@ -110,15 +110,17 @@ def train_mlp(
     "y_mean"/"y_std" (regression) or "train_acc"/"val_acc" (classification).
     """
     if task not in ("regression", "classification"):
-        raise ValueError(f"Unknown task: {task!r}. Use 'regression' or 'classification'.")
+        raise ValueError(
+            f"Unknown task: {task!r}. Use 'regression' or 'classification'."
+        )
     if loss_fn is None:
         loss_fn = nn.CrossEntropyLoss() if task == "classification" else nn.MSELoss()
 
     if p is None:
         p = y
-        
+
     device = device or get_device()
-    model.to(device)
+    model = model.to(device)
 
     n_val = int(x.size(0) * val_split)
     perm = torch.randperm(x.size(0), generator=torch.Generator().manual_seed(seed))
@@ -151,10 +153,14 @@ def train_mlp(
     val_loader = DataLoader(val_dataset, batch_size=batch_size)
 
     if optimizer_type == "adam":
-        optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+        optimizer = torch.optim.Adam(
+            model.parameters(), lr=lr, weight_decay=weight_decay
+        )
     elif optimizer_type == "sgd":
-        optimizer = torch.optim.SGD(model.parameters(), lr=lr)
-        
+        optimizer = torch.optim.SGD(
+            model.parameters(), lr=lr, weight_decay=weight_decay
+        )
+
     train_losses = []
     val_losses = []
     train_accs = []
@@ -163,7 +169,7 @@ def train_mlp(
     val_nc1 = []
     train_nc2 = []
     val_nc2 = []
-    
+
     best_val_loss = float("inf")
     best_state = None
     epochs_without_improvement = 0
@@ -207,8 +213,16 @@ def train_mlp(
 
         # Record embeddings
         if record_nc:
-            train_embeds = get_embeddings(model=model, x = x_train)
-            val_embeds = get_embeddings(model=model, x=x_val)
+            train_embeds = get_embeddings(
+                model=model,
+                x=x_train,
+                device=device,
+            )
+            val_embeds = get_embeddings(
+                model=model,
+                x=x_val,
+                device=device,
+            )
             train_nc1.append(nc1(train_embeds, y_train))
             val_nc1.append(nc1(val_embeds, y_val))
             train_nc2.append(nc2(train_embeds, y_train))
@@ -221,7 +235,9 @@ def train_mlp(
                 f"- val_loss: {val_loss:.4f}"
             )
             if task == "classification":
-                message += f" - train_acc: {train_accs[-1]:.4f} - val_acc: {val_accs[-1]:.4f}"
+                message += (
+                    f" - train_acc: {train_accs[-1]:.4f} - val_acc: {val_accs[-1]:.4f}"
+                )
             print(message)
 
         if val_loss < best_val_loss:
@@ -246,13 +262,11 @@ def train_mlp(
     else:
         result["train_acc"] = train_accs
         result["val_acc"] = val_accs
-    
+
     if record_nc:
         result["train_nc1"] = train_nc1
         result["val_nc1"] = val_nc1
         result["train_nc2"] = train_nc2
         result["val_nc2"] = val_nc2
-            
+
     return result
-
-
